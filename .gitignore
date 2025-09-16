@@ -1,0 +1,61 @@
+# Production .gitignore for Abdi WhatsApp Bot
+# Exclude runtime directories and generated files
+
+# Runtime directories
+downloads/
+temp/
+data/
+
+# Log files
+*.log
+logs/
+
+# Environment and credentials
+.env
+cookies.txt
+ytcookies.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Development files
+test_*.py
+*_test.py
+test/
+tests/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Temporary files
+*.tmp
+temp_*
+.temp*
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# QR code generated images
+qr_*.png
+temp_qr_*.png
