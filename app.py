@@ -299,7 +299,18 @@ async def process_quality_download(phone_number: str, url: str, quality: str, co
                 await send_whatsapp_message(phone_number, "❌ Download completed but file not found. Please try again.")
         else:
             error_msg = result.get('error', 'Unknown error')
-            await send_whatsapp_message(phone_number, f"❌ *Download Failed*\n\nError: {error_msg}\n\nPlease try again or try a different quality.")
+            
+            # Provide more helpful error messages
+            if 'timeout' in error_msg.lower():
+                error_response = "❌ *Download Timeout*\n\n⏰ The video is too large or connection is slow.\n\n💡 *Try:*\n• Lower quality (480p, 360p)\n• Audio only (MP3)\n• Check your internet connection"
+            elif 'filesize' in error_msg.lower() or 'too large' in error_msg.lower():
+                error_response = "❌ *File Too Large*\n\n📏 Video exceeds WhatsApp size limit (95MB).\n\n💡 *Try:*\n• Lower quality (480p, 360p)\n• Audio only (MP3)\n• Shorter video"
+            elif 'unsupported' in error_msg.lower():
+                error_response = "❌ *Unsupported Platform*\n\n🚫 This platform is not supported yet.\n\n✅ *Supported:*\nYouTube, Instagram, TikTok, Twitter, Facebook, Spotify, Pinterest"
+            else:
+                error_response = f"❌ *Download Failed*\n\nError: {error_msg}\n\n💡 *Try:*\n• Different quality\n• Audio only (MP3)\n• Check the link"
+            
+            await send_whatsapp_message(phone_number, error_response)
         
     except Exception as e:
         logger.error(f"❌ Quality download failed: {e}")
@@ -327,7 +338,18 @@ async def process_url_download(phone_number: str, url: str, contact_name: str):
         if not result.get('success'):
             error_msg = result.get('error', 'Unknown error')
             logger.error(f"❌ Processing failed: {error_msg}")
-            await send_whatsapp_message(phone_number, f"❌ *Download Failed*\n\nError: {error_msg}\n\nPlease try again or contact support.")
+            
+            # Provide more helpful error messages
+            if 'timeout' in error_msg.lower():
+                error_response = "❌ *Download Timeout*\n\n⏰ The video is too large or connection is slow.\n\n💡 *Try:*\n• Lower quality (480p, 360p)\n• Audio only (MP3)\n• Check your internet connection"
+            elif 'filesize' in error_msg.lower() or 'too large' in error_msg.lower():
+                error_response = "❌ *File Too Large*\n\n📏 Video exceeds WhatsApp size limit (95MB).\n\n💡 *Try:*\n• Lower quality (480p, 360p)\n• Audio only (MP3)\n• Shorter video"
+            elif 'unsupported' in error_msg.lower():
+                error_response = "❌ *Unsupported Platform*\n\n🚫 This platform is not supported yet.\n\n✅ *Supported:*\nYouTube, Instagram, TikTok, Twitter, Facebook, Spotify, Pinterest"
+            else:
+                error_response = f"❌ *Download Failed*\n\nError: {error_msg}\n\n💡 *Try:*\n• Different quality\n• Audio only (MP3)\n• Check the link"
+            
+            await send_whatsapp_message(phone_number, error_response)
             return
         
         # Handle different result types

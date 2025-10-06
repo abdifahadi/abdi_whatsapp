@@ -42,17 +42,18 @@ class MediaProcessor:
             'tiktok': r'(?:tiktok\.com|vm\.tiktok\.com)',
             'facebook': r'(?:facebook\.com|fb\.watch|fb\.me)',
             'spotify': r'(?:spotify\.com|open\.spotify\.com)',
-            'twitter': r'(?:twitter\.com|x\.com|t\.co)'
+            'twitter': r'(?:twitter\.com|x\.com|t\.co)',
+            'direct': r'\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v|3gp|mp3|wav|aac|m4a|ogg|wma)(?:\?.*)?$'
         }
         
-        # Video qualities
+        # Video qualities - simplified and optimized for WhatsApp
         self.video_qualities = {
-            "1080p": "best[height<=1080][height>720][ext=mp4]/best[height<=1080][height>720]/bestvideo[height<=1080][height>720]+bestaudio/best[height<=1080]",
-            "720p": "best[height<=720][height>480][ext=mp4]/best[height<=720][height>480]/bestvideo[height<=720][height>480]+bestaudio/best[height<=720]",
-            "480p": "best[height<=480][height>360][ext=mp4]/best[height<=480][height>360]/bestvideo[height<=480][height>360]+bestaudio/best[height<=480]",
-            "360p": "best[height<=360][height>240][ext=mp4]/best[height<=360][height>240]/bestvideo[height<=360][height>240]+bestaudio/best[height<=360]",
-            "240p": "best[height<=240][height>144][ext=mp4]/best[height<=240][height>144]/bestvideo[height<=240][height>144]+bestaudio/best[height<=240]",
-            "144p": "worst[height<=144][ext=mp4]/worst[height<=144]/bestvideo[height<=144]+bestaudio/worst"
+            "1080p": "best[height<=1080][filesize<90M][ext=mp4]/best[height<=1080][filesize<90M]/bestvideo[height<=1080][filesize<90M]+bestaudio/best[height<=1080]",
+            "720p": "best[height<=720][filesize<70M][ext=mp4]/best[height<=720][filesize<70M]/bestvideo[height<=720][filesize<70M]+bestaudio/best[height<=720]",
+            "480p": "best[height<=480][filesize<50M][ext=mp4]/best[height<=480][filesize<50M]/bestvideo[height<=480][filesize<50M]+bestaudio/best[height<=480]",
+            "360p": "best[height<=360][filesize<30M][ext=mp4]/best[height<=360][filesize<30M]/bestvideo[height<=360][filesize<30M]+bestaudio/best[height<=360]",
+            "240p": "best[height<=240][filesize<20M][ext=mp4]/best[height<=240][filesize<20M]/bestvideo[height<=240][filesize<20M]+bestaudio/best[height<=240]",
+            "144p": "best[height<=144][filesize<10M][ext=mp4]/best[height<=144][filesize<10M]/bestvideo[height<=144][filesize<10M]+bestaudio/best[height<=144]"
         }
         
         # User agents
@@ -139,6 +140,10 @@ class MediaProcessor:
             # Handle YouTube
             elif platform == 'youtube':
                 return await self.process_youtube(url)
+            
+            # Handle direct video URLs
+            elif platform == 'direct':
+                return await self.process_direct_video(url)
             
             # Handle other platforms
             else:
@@ -235,6 +240,27 @@ class MediaProcessor:
             logger.error(f"YouTube processing error: {e}")
             return {'success': False, 'error': 'YouTube processing failed'}
     
+    async def process_direct_video(self, url: str) -> Dict:
+        """Process direct video URL"""
+        try:
+            # For direct video URLs, download immediately
+            file_path = await self.download_media(url, platform='direct')
+            
+            if file_path:
+                return {
+                    'success': True,
+                    'type': 'direct_download',
+                    'file_path': file_path,
+                    'title': 'Direct Video',
+                    'media_type': 'Video'
+                }
+            else:
+                return {'success': False, 'error': 'Direct video download failed'}
+                
+        except Exception as e:
+            logger.error(f"Direct video processing error: {e}")
+            return {'success': False, 'error': 'Direct video processing failed'}
+    
     async def process_generic(self, url: str, platform: str) -> Dict:
         """Process generic platform URL"""
         try:
@@ -262,15 +288,27 @@ class MediaProcessor:
             return {'success': False, 'error': 'Processing failed'}
     
     async def download_media(self, url: str, quality: str = None, audio_only: bool = False, platform: str = None) -> Dict:
-        """Download media and return result"""
+        """Download media and return result with improved error handling"""
         try:
             # Detect platform if not provided
             if not platform:
                 platform = self.detect_platform(url)
             
+            if not platform:
+                return {'success': False, 'error': 'Unsupported platform'}
+            
             logger.info(f"📥 Starting download: {platform} - Quality: {quality if quality else 'audio' if audio_only else 'auto'}")
             
-            file_path = await self.download_media_file(url, quality, audio_only, platform)
+            # Add timeout for download
+            import asyncio
+            try:
+                file_path = await asyncio.wait_for(
+                    self.download_media_file(url, quality, audio_only, platform),
+                    timeout=300  # 5 minutes timeout
+                )
+            except asyncio.TimeoutError:
+                logger.error("❌ Download timeout after 5 minutes")
+                return {'success': False, 'error': 'Download timeout - file too large or slow connection'}
             
             if file_path and os.path.exists(file_path):
                 # Determine media type
@@ -281,7 +319,8 @@ class MediaProcessor:
                 else:
                     media_type = "Video/Audio"
                 
-                logger.info(f"✅ Download successful: {file_path}")
+                file_size = os.path.getsize(file_path)
+                logger.info(f"✅ Download successful: {file_path} ({file_size / 1024 / 1024:.1f}MB)")
                 
                 return {
                     'success': True,
@@ -298,7 +337,7 @@ class MediaProcessor:
             return {'success': False, 'error': f'Download failed: {str(e)}'}
     
     async def download_media_file(self, url: str, quality: str = None, audio_only: bool = False, platform: str = None) -> Optional[str]:
-        """Download media file using yt-dlp"""
+        """Download media file using yt-dlp with improved error handling and file size limits"""
         try:
             temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
             filename = f"{self.get_url_hash(url)[:8]}_{int(time.time())}"
@@ -306,7 +345,7 @@ class MediaProcessor:
             if audio_only:
                 output_template = os.path.join(temp_dir, f"{filename}.%(ext)s")
                 ydl_opts = {
-                    'format': 'bestaudio[ext=m4a]/bestaudio/best',
+                    'format': 'bestaudio[filesize<50M][ext=m4a]/bestaudio[filesize<50M]/bestaudio',
                     'outtmpl': output_template,
                     'extractaudio': True,
                     'audioformat': 'mp3',
@@ -318,11 +357,14 @@ class MediaProcessor:
                     }],
                     'quiet': True,
                     'no_warnings': True,
-                    'noplaylist': True
+                    'noplaylist': True,
+                    'max_filesize': 50 * 1024 * 1024,  # 50MB limit
+                    'socket_timeout': 30,
+                    'retries': 3
                 }
             else:
                 output_template = os.path.join(temp_dir, f"{filename}.%(ext)s")
-                format_selector = self.video_qualities.get(quality, 'best[ext=mp4]/best')
+                format_selector = self.video_qualities.get(quality, 'best[filesize<70M][ext=mp4]/best[filesize<70M]/best')
                 
                 ydl_opts = {
                     'format': format_selector,
@@ -330,36 +372,98 @@ class MediaProcessor:
                     'quiet': True,
                     'no_warnings': True,
                     'merge_output_format': 'mp4',
-                    'noplaylist': True
+                    'noplaylist': True,
+                    'max_filesize': 90 * 1024 * 1024,  # 90MB limit for WhatsApp
+                    'socket_timeout': 30,
+                    'retries': 3,
+                    'http_chunk_size': 1048576,  # 1MB chunks
+                    'concurrent_fragment_downloads': 3  # Reduced for stability
                 }
             
             # Add platform-specific options
-            if platform == 'youtube' and os.path.exists(YOUTUBE_COOKIES_FILE):
-                ydl_opts['cookiefile'] = YOUTUBE_COOKIES_FILE
+            if platform == 'youtube':
+                # Try cookies first, then fallback to browser cookies
+                if os.path.exists(YOUTUBE_COOKIES_FILE):
+                    ydl_opts['cookiefile'] = YOUTUBE_COOKIES_FILE
+                else:
+                    # Try to use browser cookies as fallback
+                    try:
+                        ydl_opts['cookiesfrombrowser'] = ('chrome',)
+                    except:
+                        pass
+                
+                # Add YouTube-specific options to avoid bot detection
+                ydl_opts.update({
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'referer': 'https://www.youtube.com/',
+                    'origin': 'https://www.youtube.com'
+                })
+            elif platform == 'direct':
+                # For direct video URLs, use simpler options
+                ydl_opts.update({
+                    'format': 'best',
+                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                })
             elif platform in ['instagram', 'threads']:
                 ydl_opts = self.instagram_auth.get_ytdl_opts(ydl_opts)
             
-            # Enhanced settings
-            ydl_opts.update({
-                'retries': 2,
-                'socket_timeout': 20,
-                'http_chunk_size': 16777216,
-                'concurrent_fragment_downloads': 6
-            })
+            logger.info(f"📥 Starting download with format: {format_selector if not audio_only else 'audio'}")
             
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+            # Try download with error handling
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+            except yt_dlp.DownloadError as e:
+                # If YouTube fails due to bot detection, try with different approach
+                if platform == 'youtube' and 'bot' in str(e).lower():
+                    logger.warning("⚠️ YouTube bot detection, trying alternative approach...")
+                    
+                    # Try with different user agent and no cookies
+                    ydl_opts.pop('cookiesfrombrowser', None)
+                    ydl_opts.pop('cookiefile', None)
+                    ydl_opts.update({
+                        'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2 Mobile/15E148 Safari/604.1',
+                        'referer': 'https://m.youtube.com/',
+                        'origin': 'https://m.youtube.com',
+                        'format': 'best[height<=480][filesize<50M]/best[height<=480]/best'  # Simpler format
+                    })
+                    
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([url])
+                else:
+                    raise e
             
-            # Find downloaded file
+            # Find downloaded file and check size
             for file in os.listdir(temp_dir):
                 file_path = os.path.join(temp_dir, file)
                 if os.path.isfile(file_path) and file.startswith(filename):
+                    file_size = os.path.getsize(file_path)
+                    logger.info(f"📁 Downloaded file: {file} ({file_size / 1024 / 1024:.1f}MB)")
+                    
+                    # Check file size limit
+                    if file_size > WHATSAPP_MAX_BYTES:
+                        logger.warning(f"⚠️ File too large for WhatsApp: {file_size / 1024 / 1024:.1f}MB")
+                        os.remove(file_path)
+                        return None
+                    
                     return file_path
             
+            logger.error("❌ No file found after download")
             return None
             
+        except yt_dlp.DownloadError as e:
+            error_msg = str(e)
+            if 'bot' in error_msg.lower() or 'sign in' in error_msg.lower():
+                logger.error(f"❌ Authentication required: {error_msg}")
+                return None
+            elif 'timeout' in error_msg.lower():
+                logger.error(f"❌ Connection timeout: {error_msg}")
+                return None
+            else:
+                logger.error(f"❌ yt-dlp download error: {error_msg}")
+                return None
         except Exception as e:
-            logger.error(f"Download failed: {e}")
+            logger.error(f"❌ Download failed: {e}")
             return None
     
     async def download_media_with_filename(self, url: str, filename: str = None, audio_only: bool = False) -> Optional[str]:
