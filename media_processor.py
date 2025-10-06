@@ -11,11 +11,30 @@ import logging
 import requests
 from pathlib import Path
 from typing import Dict, Optional, List, Any
-from bs4 import BeautifulSoup
-import instaloader
-import yt_dlp
-import qrcode
-from PIL import Image, ImageDraw, ImageFont
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
+    
+try:
+    import instaloader
+except ImportError:
+    instaloader = None
+    
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
+    
+try:
+    import qrcode
+    from PIL import Image, ImageDraw, ImageFont
+except ImportError:
+    qrcode = None
+    Image = None
+    ImageDraw = None
+    ImageFont = None
 
 from config import (
     MAX_FILE_SIZE, DOWNLOADS_DIR, TEMP_DIR,
@@ -31,7 +50,11 @@ class MediaProcessor:
     
     def __init__(self):
         self.download_cache = {}
-        self.instagram_auth = InstagramCookieManager()
+        try:
+            self.instagram_auth = InstagramCookieManager()
+        except Exception as e:
+            logger.warning(f"⚠️ Instagram auth initialization failed: {e}")
+            self.instagram_auth = None
         
         # Platform patterns
         self.platform_patterns = {
@@ -300,6 +323,12 @@ class MediaProcessor:
     async def download_media_file(self, url: str, quality: str = None, audio_only: bool = False, platform: str = None) -> Optional[str]:
         """Download media file using yt-dlp"""
         try:
+            if not yt_dlp:
+                logger.error("yt-dlp not available")
+                return None
+                
+            # Ensure temp directory exists
+            os.makedirs(TEMP_DIR, exist_ok=True)
             temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
             filename = f"{self.get_url_hash(url)[:8]}_{int(time.time())}"
             
@@ -316,9 +345,10 @@ class MediaProcessor:
                         'preferredcodec': 'mp3',
                         'preferredquality': '320',
                     }],
-                    'quiet': True,
-                    'no_warnings': True,
-                    'noplaylist': True
+                    'quiet': False,  # Enable logging for debugging
+                    'no_warnings': False,
+                    'noplaylist': True,
+                    'ignoreerrors': True
                 }
             else:
                 output_template = os.path.join(temp_dir, f"{filename}.%(ext)s")
@@ -327,44 +357,69 @@ class MediaProcessor:
                 ydl_opts = {
                     'format': format_selector,
                     'outtmpl': output_template,
-                    'quiet': True,
-                    'no_warnings': True,
+                    'quiet': False,  # Enable logging for debugging
+                    'no_warnings': False,
                     'merge_output_format': 'mp4',
-                    'noplaylist': True
+                    'noplaylist': True,
+                    'ignoreerrors': True
                 }
             
             # Add platform-specific options
             if platform == 'youtube' and os.path.exists(YOUTUBE_COOKIES_FILE):
                 ydl_opts['cookiefile'] = YOUTUBE_COOKIES_FILE
-            elif platform in ['instagram', 'threads']:
+            elif platform in ['instagram', 'threads'] and hasattr(self, 'instagram_auth'):
                 ydl_opts = self.instagram_auth.get_ytdl_opts(ydl_opts)
             
-            # Enhanced settings
+            # Enhanced settings with better error handling
             ydl_opts.update({
-                'retries': 2,
-                'socket_timeout': 20,
-                'http_chunk_size': 16777216,
-                'concurrent_fragment_downloads': 6
+                'retries': 3,
+                'socket_timeout': 30,
+                'http_chunk_size': 10485760,  # 10MB chunks
+                'concurrent_fragment_downloads': 4,
+                'writesubtitles': False,
+                'writeautomaticsub': False,
+                'writeinfojson': False,
+                'writethumbnail': False
             })
+            
+            logger.info(f"📥 Starting download with yt-dlp: {url}")
+            logger.info(f"📁 Output directory: {temp_dir}")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
             
             # Find downloaded file
+            downloaded_files = []
             for file in os.listdir(temp_dir):
                 file_path = os.path.join(temp_dir, file)
-                if os.path.isfile(file_path) and file.startswith(filename):
+                if os.path.isfile(file_path):
+                    downloaded_files.append(file_path)
+                    logger.info(f"📄 Found file: {file} (size: {os.path.getsize(file_path)} bytes)")
+            
+            # Return the first valid file
+            for file_path in downloaded_files:
+                if os.path.getsize(file_path) > 0:  # Check file is not empty
+                    logger.info(f"✅ Download successful: {file_path}")
                     return file_path
             
+            logger.error(f"❌ No valid files downloaded to {temp_dir}")
             return None
             
         except Exception as e:
-            logger.error(f"Download failed: {e}")
+            logger.error(f"❌ Download failed: {e}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return None
     
     async def download_media_with_filename(self, url: str, filename: str = None, audio_only: bool = False) -> Optional[str]:
         """Download media with custom filename"""
         try:
+            if not yt_dlp:
+                logger.error("yt-dlp not available")
+                return None
+                
+            # Ensure temp directory exists
+            os.makedirs(TEMP_DIR, exist_ok=True)
             temp_dir = tempfile.mkdtemp(dir=TEMP_DIR)
             
             if filename:
@@ -385,88 +440,127 @@ class MediaProcessor:
                         'preferredcodec': 'mp3',
                         'preferredquality': '320',
                     }],
-                    'quiet': True,
-                    'no_warnings': True,
-                    'noplaylist': True
+                    'quiet': False,
+                    'no_warnings': False,
+                    'noplaylist': True,
+                    'ignoreerrors': True
                 }
             else:
                 output_template = os.path.join(temp_dir, f"{safe_filename}.%(ext)s")
                 ydl_opts = {
                     'format': 'best[ext=mp4]/best',
                     'outtmpl': output_template,
-                    'quiet': True,
-                    'no_warnings': True,
+                    'quiet': False,
+                    'no_warnings': False,
                     'merge_output_format': 'mp4',
-                    'noplaylist': True
+                    'noplaylist': True,
+                    'ignoreerrors': True
                 }
+            
+            logger.info(f"📥 Starting download with custom filename: {safe_filename}")
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
             
             # Find downloaded file
+            downloaded_files = []
             for file in os.listdir(temp_dir):
                 file_path = os.path.join(temp_dir, file)
-                if os.path.isfile(file_path) and file.startswith(safe_filename):
+                if os.path.isfile(file_path):
+                    downloaded_files.append(file_path)
+                    logger.info(f"📄 Found file: {file} (size: {os.path.getsize(file_path)} bytes)")
+            
+            # Return the first valid file
+            for file_path in downloaded_files:
+                if os.path.getsize(file_path) > 0:
+                    logger.info(f"✅ Download with filename successful: {file_path}")
                     return file_path
             
+            logger.error(f"❌ No valid files downloaded")
             return None
             
         except Exception as e:
-            logger.error(f"Download with filename failed: {e}")
+            logger.error(f"❌ Download with filename failed: {e}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return None
     
     async def get_media_info(self, url: str) -> Optional[Dict]:
         """Extract media information"""
         try:
+            if not yt_dlp:
+                logger.error("yt-dlp not available")
+                return None
+                
             ydl_opts = {
-                'quiet': True,
-                'no_warnings': True,
+                'quiet': False,  # Enable logging for debugging
+                'no_warnings': False,
                 'extract_flat': False,
                 'skip_download': True,
-                'socket_timeout': 20,
-                'retries': 2,
-                'noplaylist': True
+                'socket_timeout': 30,
+                'retries': 3,
+                'noplaylist': True,
+                'ignoreerrors': True
             }
             
             # Add YouTube cookies if available
             if 'youtube' in url and os.path.exists(YOUTUBE_COOKIES_FILE):
                 ydl_opts['cookiefile'] = YOUTUBE_COOKIES_FILE
             
+            logger.info(f"📋 Extracting media info: {url}")
+            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
                 
-                return {
-                    'title': info.get('title', 'Unknown Title'),
-                    'duration': info.get('duration', 0),
-                    'thumbnail': info.get('thumbnail'),
-                    'uploader': info.get('uploader', 'Unknown'),
-                    'id': info.get('id', ''),
-                    'platform': self.detect_platform(url),
-                    'timestamp': time.time()
-                }
+                if info:
+                    result = {
+                        'title': info.get('title', 'Unknown Title'),
+                        'duration': info.get('duration', 0),
+                        'thumbnail': info.get('thumbnail'),
+                        'uploader': info.get('uploader', 'Unknown'),
+                        'id': info.get('id', ''),
+                        'platform': self.detect_platform(url),
+                        'timestamp': time.time()
+                    }
+                    logger.info(f"✅ Media info extracted: {result['title']}")
+                    return result
+                else:
+                    logger.error("❌ No media info extracted")
+                    return None
                 
         except Exception as e:
-            logger.warning(f"Media info extraction failed: {e}")
+            logger.warning(f"❌ Media info extraction failed: {e}")
+            import traceback
+            logger.warning(f"❌ Traceback: {traceback.format_exc()}")
             return None
     
     async def extract_spotify_metadata(self, url: str) -> Optional[Dict]:
         """Extract Spotify metadata"""
         try:
+            if not BeautifulSoup:
+                logger.error("BeautifulSoup not available")
+                return None
+                
             headers = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
             }
             
-            response = requests.get(url, headers=headers, timeout=12)
+            logger.info(f"🎵 Extracting Spotify metadata: {url}")
+            
+            response = requests.get(url, headers=headers, timeout=15)
             if response.status_code != 200:
+                logger.error(f"❌ Spotify request failed: {response.status_code}")
                 return None
 
             soup = BeautifulSoup(response.text, 'html.parser')
             title_tag = soup.find('meta', property='og:title')
             
             if not title_tag:
+                logger.error("❌ No title tag found in Spotify page")
                 return None
             
             title_text = title_tag.get('content', '')
+            logger.info(f"🎵 Found Spotify title: {title_text}")
             
             # Parse track info
             if '/track/' in url.lower():
@@ -489,16 +583,21 @@ class MediaProcessor:
                 full_title = filename
                 
             else:
+                logger.error("❌ Unsupported Spotify URL type")
                 return None
             
-            return {
+            result = {
                 'search_query': search_query,
                 'filename': filename,
                 'full_title': full_title
             }
+            logger.info(f"✅ Spotify metadata extracted: {result}")
+            return result
             
         except Exception as e:
-            logger.error(f"Spotify metadata extraction error: {e}")
+            logger.error(f"❌ Spotify metadata extraction error: {e}")
+            import traceback
+            logger.error(f"❌ Traceback: {traceback.format_exc()}")
             return None
     
     def extract_title_from_path(self, file_path: str) -> str:
