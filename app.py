@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 @app.route('/', methods=['GET'])
+@app.route('/webhook', methods=['GET'])
 def verify():
     """Verify webhook subscription"""
     mode = request.args.get('hub.mode')
@@ -19,6 +20,7 @@ def verify():
     return verify_webhook(mode, token, challenge)
 
 @app.route('/', methods=['POST'])
+@app.route('/webhook', methods=['POST'])
 def webhook():
     """Handle incoming webhook events"""
     data = request.get_json()
