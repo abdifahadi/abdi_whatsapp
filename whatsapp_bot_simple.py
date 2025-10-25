@@ -96,26 +96,105 @@ class WhatsAppBusiness:
                 return {"success": False, "error": str(e)}
     
     def send_document(self, document_path: str, recipient_id: str, caption: Optional[str] = None):
-        """Send a document via WhatsApp API"""
-        if self.use_heyoo and self.client is not None:
-            try:
-                # Send document using heyoo
-                response = self.client.send_document(
-                    document=document_path,
-                    recipient_id=recipient_id,
-                    caption=caption
+        """Send a document via WhatsApp API by uploading it first"""
+        try:
+            # Determine media type based on file extension
+            file_extension = document_path.lower().split('.')[-1]
+            media_type = 'video' if file_extension in ['mp4', 'mov', 'avi', 'mkv'] else 'document'
+            
+            # Upload the media to WhatsApp servers
+            with open(document_path, 'rb') as f:
+                files = {
+                    'file': (os.path.basename(document_path), f, self._get_mime_type(document_path)),
+                    'type': (None, media_type),
+                    'messaging_product': (None, 'whatsapp')
+                }
+                
+                upload_response = requests.post(
+                    f"https://graph.facebook.com/v17.0/{self.phone_number_id}/media",
+                    files=files,
+                    headers={
+                        "Authorization": f"Bearer {self.access_token}"
+                    }
                 )
-                logger.info(f"✅ Document sent successfully to {recipient_id}")
-                return {"success": True}
-            except Exception as e:
-                logger.error(f"❌ Error sending document to {recipient_id}: {e}")
-                # Fallback to sending a message
-                message = caption if caption else "Here's your downloaded content!"
-                return self.send_message(message, recipient_id)
-        else:
-            # For fallback implementation, send a message indicating download is complete
-            message = caption if caption else "Download complete! File is ready."
+            
+            if upload_response.status_code == 200:
+                upload_data = upload_response.json()
+                media_id = upload_data.get('id')
+                
+                if media_id:
+                    # Now send the uploaded media
+                    payload = {
+                        "messaging_product": "whatsapp",
+                        "to": recipient_id,
+                        "type": media_type,
+                    }
+                    
+                    # Add media-specific payload
+                    if media_type == 'video':
+                        payload["video"] = {
+                            "id": media_id,
+                            "caption": caption or "Here's your downloaded video!"
+                        }
+                    else:
+                        payload["document"] = {
+                            "id": media_id,
+                            "caption": caption or "Here's your downloaded file!"
+                        }
+                    
+                    send_response = requests.post(self.api_url, json=payload, headers=self.headers)
+                    if send_response.status_code == 200:
+                        logger.info(f"✅ {media_type.title()} sent successfully to {recipient_id}")
+                        return {"success": True}
+                    else:
+                        error_msg = send_response.json() if send_response.content else "Unknown error"
+                        logger.error(f"❌ Failed to send {media_type} to {recipient_id}: {error_msg}")
+                        return {"success": False, "error": str(error_msg)}
+                else:
+                    logger.error(f"❌ Failed to get media ID from upload response: {upload_data}")
+                    return {"success": False, "error": "Failed to get media ID"}
+            else:
+                error_msg = upload_response.json() if upload_response.content else "Unknown error"
+                logger.error(f"❌ Failed to upload media: {error_msg}")
+                return {"success": False, "error": str(error_msg)}
+                
+        except Exception as e:
+            logger.error(f"❌ Error sending document to {recipient_id}: {e}")
+        
+        # Fallback to sending a message with file information
+        try:
+            file_size = os.path.getsize(document_path)
+            size_mb = file_size / (1024 * 1024)
+            
+            message = "✅ *Download Complete!*\n\n"
+            message += f"📁 *File*: {os.path.basename(document_path)}\n"
+            message += f"📊 *Size*: {size_mb:.1f}MB\n"
+            if caption:
+                message += f"📝 *Caption*: {caption}\n"
+            message += "\n⚠️ *Note*: Due to technical limitations, the file cannot be sent directly via WhatsApp.\n"
+            message += "The file is available on the server."
+            
+            result = self.send_message(message, recipient_id)
+            return result
+        except Exception as e:
+            logger.error(f"❌ Error sending fallback message: {e}")
+            message = caption if caption else "✅ Video downloaded successfully!"
             return self.send_message(message, recipient_id)
+
+    def _get_mime_type(self, file_path: str) -> str:
+        """Get MIME type based on file extension"""
+        extension = file_path.lower().split('.')[-1]
+        mime_types = {
+            'mp4': 'video/mp4',
+            'mov': 'video/quicktime',
+            'avi': 'video/x-msvideo',
+            'mkv': 'video/x-matroska',
+            'jpg': 'image/jpeg',
+            'jpeg': 'image/jpeg',
+            'png': 'image/png',
+            'gif': 'image/gif'
+        }
+        return mime_types.get(extension, 'application/octet-stream')
 
 # Initialize WhatsApp client
 messenger = WhatsAppBusiness(WHATSAPP_TOKEN, PHONE_NUMBER_ID)
