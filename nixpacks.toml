@@ -1,0 +1,11 @@
+[phases.setup]
+aptPkgs = ["ffmpeg", "libmagic-dev", "curl"]
+
+[phases.install]
+cmds = [
+"python3 -m venv venv",
+". venv/bin/activate && pip install -r requirements.txt"
+]
+
+[phases.start]
+cmd = ". venv/bin/activate && python app.py"
