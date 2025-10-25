@@ -40,6 +40,13 @@ class WhatsAppBusiness:
     def __init__(self, access_token: str, phone_number_id: str):
         self.use_heyoo = False
         self.client = None
+        self.access_token = access_token
+        self.phone_number_id = phone_number_id  # Always set this attribute
+        self.api_url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
+        self.headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Content-Type": "application/json"
+        }
         
         if HEYOO_AVAILABLE and WhatsApp is not None:
             try:
@@ -48,19 +55,8 @@ class WhatsAppBusiness:
                 logger.info("✅ Using heyoo library for WhatsApp API")
             except Exception as e:
                 logger.warning(f"❌ Failed to initialize heyoo library: {e}")
+                self.use_heyoo = False
         else:
-            logger.warning("❌ heyoo library not available. Falling back to manual implementation.")
-            self.use_heyoo = False
-        
-        if not self.use_heyoo:
-            # Fallback implementation
-            self.access_token = access_token
-            self.phone_number_id = phone_number_id
-            self.api_url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
-            self.headers = {
-                "Authorization": f"Bearer {self.access_token}",
-                "Content-Type": "application/json"
-            }
             logger.info("ℹ️ Using fallback implementation for WhatsApp API")
 
     def send_message(self, message: str, recipient_id: str):
@@ -102,21 +98,24 @@ class WhatsAppBusiness:
             file_extension = document_path.lower().split('.')[-1]
             media_type = 'video' if file_extension in ['mp4', 'mov', 'avi', 'mkv'] else 'document'
             
-            # Upload the media to WhatsApp servers
+            # Read file data
             with open(document_path, 'rb') as f:
-                files = {
-                    'file': (os.path.basename(document_path), f, self._get_mime_type(document_path)),
-                    'type': (None, media_type),
-                    'messaging_product': (None, 'whatsapp')
+                file_data = f.read()
+            
+            # Upload the media to WhatsApp servers
+            files = {
+                'file': (os.path.basename(document_path), file_data, self._get_mime_type(document_path)),
+                'type': (None, media_type),
+                'messaging_product': (None, 'whatsapp')
+            }
+            
+            upload_response = requests.post(
+                f"https://graph.facebook.com/v17.0/{self.phone_number_id}/media",
+                files=files,
+                headers={
+                    "Authorization": f"Bearer {self.access_token}"
                 }
-                
-                upload_response = requests.post(
-                    f"https://graph.facebook.com/v17.0/{self.phone_number_id}/media",
-                    files=files,
-                    headers={
-                        "Authorization": f"Bearer {self.access_token}"
-                    }
-                )
+            )
             
             if upload_response.status_code == 200:
                 upload_data = upload_response.json()
@@ -124,22 +123,25 @@ class WhatsAppBusiness:
                 
                 if media_id:
                     # Now send the uploaded media
-                    payload = {
-                        "messaging_product": "whatsapp",
-                        "to": recipient_id,
-                        "type": media_type,
-                    }
-                    
-                    # Add media-specific payload
                     if media_type == 'video':
-                        payload["video"] = {
-                            "id": media_id,
-                            "caption": caption or "Here's your downloaded video!"
+                        payload = {
+                            "messaging_product": "whatsapp",
+                            "to": recipient_id,
+                            "type": "video",
+                            "video": {
+                                "id": media_id,
+                                "caption": caption or "Here's your downloaded video!"
+                            }
                         }
                     else:
-                        payload["document"] = {
-                            "id": media_id,
-                            "caption": caption or "Here's your downloaded file!"
+                        payload = {
+                            "messaging_product": "whatsapp",
+                            "to": recipient_id,
+                            "type": "document",
+                            "document": {
+                                "id": media_id,
+                                "caption": caption or "Here's your downloaded file!"
+                            }
                         }
                     
                     send_response = requests.post(self.api_url, json=payload, headers=self.headers)
