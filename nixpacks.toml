@@ -1,0 +1,14 @@
+[phases.setup]
+pythonVersion = "3.11"
+
+[phases.install]
+cmds = [
+  "apt-get update && apt-get install -y ffmpeg",
+  "pip install -r requirements.txt"
+]
+
+[phases.build]
+cmds = []
+
+[start]
+cmd = "python app.py"
